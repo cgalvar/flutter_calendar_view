@@ -100,6 +100,9 @@ class InternalDayViewPage<T extends Object?> extends StatelessWidget {
 
   final ScrollController scrollController;
 
+  /// Use this field to disable the calendar scrolling
+  final ScrollPhysics? scrollPhysics;
+
   /// Defines a single day page.
   const InternalDayViewPage({
     Key? key,
@@ -129,6 +132,7 @@ class InternalDayViewPage<T extends Object?> extends StatelessWidget {
     required this.dayDetectorBuilder,
     required this.showHalfHours,
     required this.halfHourIndicatorSettings,
+    required this.scrollPhysics,
   }) : super(key: key);
 
   @override
@@ -142,6 +146,7 @@ class InternalDayViewPage<T extends Object?> extends StatelessWidget {
           Expanded(
             child: SingleChildScrollView(
               controller: scrollController,
+              physics: scrollPhysics,
               child: SizedBox(
                 height: height,
                 width: width,

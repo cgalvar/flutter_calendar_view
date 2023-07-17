@@ -418,6 +418,7 @@ class DayViewState<T extends Object?> extends State<DayView<T>> {
                           scrollController: _scrollController,
                           showHalfHours: widget.showHalfHours,
                           halfHourIndicatorSettings: _halfHourIndicatorSettings,
+                          scrollPhysics: widget.scrollPhysics,
                         ),
                       );
                     },
