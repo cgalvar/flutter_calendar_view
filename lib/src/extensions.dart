@@ -164,3 +164,31 @@ extension MinutesExtension on MinuteSlotSize {
     }
   }
 }
+
+extension MyList on List<CalendarEventData> {
+  // Below function will add the new event in sorted manner(startTimeWise) in
+  // the existing list of CalendarEventData.
+
+  void addEventInSortedManner(CalendarEventData event) {
+    var addIndex = -1;
+
+    for (var i = 0; i < this.length; i++) {
+      if ((event.startTime?.getTotalMinutes ?? 0) -
+              (this[i].startTime?.getTotalMinutes ?? 0) <=
+          0) {
+        addIndex = i;
+        break;
+      }
+    }
+
+    if (addIndex > -1) {
+      insert(addIndex, event);
+    } else {
+      add(event);
+    }
+  }
+}
+
+extension TimerOfDayExtension on TimeOfDay {
+  int get getTotalMinutes => hour * 60 + minute;
+}

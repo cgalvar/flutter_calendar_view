@@ -18,6 +18,7 @@ import '../event_arrangers/event_arrangers.dart';
 import '../event_controller.dart';
 import '../extensions.dart';
 import '../modals.dart';
+import '../painters.dart';
 import '../style/header_style.dart';
 import '../typedefs.dart';
 import '_internal_day_view_page.dart';
@@ -79,6 +80,11 @@ class DayView<T extends Object?> extends StatefulWidget {
   /// Pass [HourIndicatorSettings.none] to remove Hour lines.
   final HourIndicatorSettings? hourIndicatorSettings;
 
+  /// A funtion that returns a [CustomPainter].
+  ///
+  /// Use this if you want to paint custom hour lines.
+  final CustomHourLinePainter? hourLinePainter;
+
   /// Defines settings for live time indicator.
   ///
   /// Pass [HourIndicatorSettings.none] to remove live time indicator.
@@ -88,6 +94,11 @@ class DayView<T extends Object?> extends StatefulWidget {
   ///
   /// Pass [HourIndicatorSettings.none] to remove half hour lines.
   final HourIndicatorSettings? halfHourIndicatorSettings;
+
+  /// Defines settings for quarter hour indication lines.
+  ///
+  /// Pass [HourIndicatorSettings.none] to remove quarter hour lines.
+  final HourIndicatorSettings? quarterHourIndicatorSettings;
 
   /// Page transition duration used when user try to change page using
   /// [DayViewState.nextPage] or [DayViewState.previousPage]
@@ -145,8 +156,12 @@ class DayView<T extends Object?> extends StatefulWidget {
   /// Background colour of day view page.
   final Color? backgroundColor;
 
-  /// Scroll offset of day view page.
-  final double scrollOffset;
+  /// Defines initial offset of first page that will be displayed when
+  /// [DayView] is initialized.
+  ///
+  /// If [scrollOffset] is null then [startDuration] will be considered for
+  /// initial offset.
+  final double? scrollOffset;
 
   /// This method will be called when user taps on event tile.
   final CellTapCallback<T>? onEventTap;
@@ -182,7 +197,21 @@ class DayView<T extends Object?> extends StatefulWidget {
   /// Display full day event builder.
   final FullDayEventBuilder<T>? fullDayEventBuilder;
 
+  /// Show half hour indicator
   final bool showHalfHours;
+
+  /// Show quarter hour indicator(15min & 45min).
+  final bool showQuarterHours;
+
+  /// It define the starting duration from where day view page will be visible
+  /// By default it will be Duration(hours:0)
+  final Duration startDuration;
+
+  /// Callback for the Header title
+  final HeaderTitleCallback? onHeaderTitleTap;
+
+  /// Emulate vertical line offset from hour line starts.
+  final double emulateVerticalOffsetBy;
 
   /// Main widget for day view.
   const DayView({
@@ -199,6 +228,7 @@ class DayView<T extends Object?> extends StatefulWidget {
     this.maxDay,
     this.initialDay,
     this.hourIndicatorSettings,
+    this.hourLinePainter,
     this.heightPerMinute = 0.7,
     this.timeLineBuilder,
     this.timeLineWidth,
@@ -210,7 +240,7 @@ class DayView<T extends Object?> extends StatefulWidget {
     this.eventArranger,
     this.verticalLineOffset = 10,
     this.backgroundColor = Colors.white,
-    this.scrollOffset = 0.0,
+    this.scrollOffset,
     this.onEventTap,
     this.onDateLongPress,
     this.onDateTap,
@@ -222,8 +252,15 @@ class DayView<T extends Object?> extends StatefulWidget {
     this.pageViewPhysics,
     this.dayDetectorBuilder,
     this.showHalfHours = false,
+    this.showQuarterHours = false,
     this.halfHourIndicatorSettings,
-  })  : assert(timeLineOffset >= 0,
+    this.quarterHourIndicatorSettings,
+    this.startDuration = const Duration(hours: 0),
+    this.onHeaderTitleTap,
+    this.emulateVerticalOffsetBy = 0,
+  })  : assert(!(onHeaderTitleTap != null && dayTitleBuilder != null),
+            "can't use [onHeaderTitleTap] & [dayTitleBuilder] simultaneously"),
+        assert(timeLineOffset >= 0,
             "timeLineOffset must be greater than or equal to 0"),
         assert(width == null || width > 0,
             "Calendar width must be greater than 0."),
@@ -257,6 +294,9 @@ class DayViewState<T extends Object?> extends State<DayView<T>> {
 
   late HourIndicatorSettings _hourIndicatorSettings;
   late HourIndicatorSettings _halfHourIndicatorSettings;
+  late HourIndicatorSettings _quarterHourIndicatorSettings;
+  late CustomHourLinePainter _hourLinePainter;
+
   late HourIndicatorSettings _liveTimeIndicatorSettings;
 
   late PageController _pageController;
@@ -293,8 +333,9 @@ class DayViewState<T extends Object?> extends State<DayView<T>> {
     _regulateCurrentDate();
 
     _calculateHeights();
-    _scrollController =
-        ScrollController(initialScrollOffset: widget.scrollOffset);
+    _scrollController = ScrollController(
+        initialScrollOffset: widget.scrollOffset ??
+            widget.startDuration.inMinutes * widget.heightPerMinute);
     _pageController = PageController(initialPage: _currentIndex);
     _eventArranger = widget.eventArranger ?? SideEventArranger<T>();
     _assignBuilders();
@@ -318,8 +359,6 @@ class DayViewState<T extends Object?> extends State<DayView<T>> {
         // user adds new events.
         ..addListener(_reloadCallback);
     }
-
-    _updateViewDimensions();
   }
 
   @override
@@ -349,8 +388,6 @@ class DayViewState<T extends Object?> extends State<DayView<T>> {
     // Update heights.
     _calculateHeights();
 
-    _updateViewDimensions();
-
     // Update builders and callbacks
     _assignBuilders();
   }
@@ -366,69 +403,81 @@ class DayViewState<T extends Object?> extends State<DayView<T>> {
   Widget build(BuildContext context) {
     return SafeAreaWrapper(
       option: widget.safeAreaOption,
-      child: SizedBox(
-        width: _width,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _dayTitleBuilder(_currentDate),
-            Expanded(
-              child: DecoratedBox(
-                decoration: BoxDecoration(color: widget.backgroundColor),
-                child: SizedBox(
-                  height: _height,
-                  child: PageView.builder(
-                    physics: widget.pageViewPhysics,
-                    itemCount: _totalDays,
-                    controller: _pageController,
-                    onPageChanged: _onPageChange,
-                    itemBuilder: (_, index) {
-                      final date = DateTime(
-                          _minDate.year, _minDate.month, _minDate.day + index);
-                      return ValueListenableBuilder(
-                        valueListenable: _scrollConfiguration,
-                        builder: (_, __, ___) => InternalDayViewPage<T>(
-                          key: ValueKey(
-                              _hourHeight.toString() + date.toString()),
-                          width: _width,
-                          liveTimeIndicatorSettings: _liveTimeIndicatorSettings,
-                          timeLineBuilder: _timeLineBuilder,
-                          dayDetectorBuilder: _dayDetectorBuilder,
-                          eventTileBuilder: _eventTileBuilder,
-                          heightPerMinute: widget.heightPerMinute,
-                          hourIndicatorSettings: _hourIndicatorSettings,
-                          date: date,
-                          onTileTap: widget.onEventTap,
-                          onDateLongPress: widget.onDateLongPress,
-                          onDateTap: widget.onDateTap,
-                          showLiveLine: widget.showLiveTimeLineInAllDays ||
-                              date.compareWithoutTime(DateTime.now()),
-                          timeLineOffset: widget.timeLineOffset,
-                          timeLineWidth: _timeLineWidth,
-                          verticalLineOffset: widget.verticalLineOffset,
-                          showVerticalLine: widget.showVerticalLine,
-                          height: _height,
-                          controller: controller,
-                          hourHeight: _hourHeight,
-                          eventArranger: _eventArranger,
-                          minuteSlotSize: widget.minuteSlotSize,
-                          scrollNotifier: _scrollConfiguration,
-                          fullDayEventBuilder: _fullDayEventBuilder,
-                          scrollController: _scrollController,
-                          showHalfHours: widget.showHalfHours,
-                          halfHourIndicatorSettings: _halfHourIndicatorSettings,
-                          scrollPhysics: widget.scrollPhysics,
+      child: LayoutBuilder(builder: (context, constraint) {
+        _width = widget.width ?? constraint.maxWidth;
+        _updateViewDimensions();
+        return SizedBox(
+          width: _width,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _dayTitleBuilder(_currentDate),
+              Expanded(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(color: widget.backgroundColor),
+                  child: SizedBox(
+                    height: _height,
+                    child: PageView.builder(
+                      physics: widget.pageViewPhysics,
+                      itemCount: _totalDays,
+                      controller: _pageController,
+                      onPageChanged: _onPageChange,
+                      itemBuilder: (_, index) {
+                        final date = DateTime(_minDate.year, _minDate.month,
+                            _minDate.day + index);
+                        return ValueListenableBuilder(
+                          valueListenable: _scrollConfiguration,
+                          builder: (_, __, ___) => InternalDayViewPage<T>(
+                            key: ValueKey(
+                                _hourHeight.toString() + date.toString()),
+                            width: _width,
+                            liveTimeIndicatorSettings:
+                                _liveTimeIndicatorSettings,
+                            timeLineBuilder: _timeLineBuilder,
+                            dayDetectorBuilder: _dayDetectorBuilder,
+                            eventTileBuilder: _eventTileBuilder,
+                            heightPerMinute: widget.heightPerMinute,
+                            hourIndicatorSettings: _hourIndicatorSettings,
+                            hourLinePainter: _hourLinePainter,
+                            date: date,
+                            onTileTap: widget.onEventTap,
+                            onDateLongPress: widget.onDateLongPress,
+                            onDateTap: widget.onDateTap,
+                            showLiveLine: widget.showLiveTimeLineInAllDays ||
+                                date.compareWithoutTime(DateTime.now()),
+                            timeLineOffset: widget.timeLineOffset,
+                            timeLineWidth: _timeLineWidth,
+                            verticalLineOffset: widget.verticalLineOffset,
+                            showVerticalLine: widget.showVerticalLine,
+                            height: _height,
+                            controller: controller,
+                            hourHeight: _hourHeight,
+                            eventArranger: _eventArranger,
+                            minuteSlotSize: widget.minuteSlotSize,
+                            scrollNotifier: _scrollConfiguration,
+                            fullDayEventBuilder: _fullDayEventBuilder,
+                            scrollController: _scrollController,
+                            showHalfHours: widget.showHalfHours,
+                            showQuarterHours: widget.showQuarterHours,
+                            halfHourIndicatorSettings:
+                                _halfHourIndicatorSettings,
+                            quarterHourIndicatorSettings:
+                                _quarterHourIndicatorSettings,
+                            emulateVerticalOffsetBy:
+                                widget.emulateVerticalOffsetBy,
+                            scrollPhysics: widget.scrollPhysics,
                         ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
-        ),
-      ),
+            ],
+          ),
+        );
+      }),
     );
   }
 
@@ -454,8 +503,6 @@ class DayViewState<T extends Object?> extends State<DayView<T>> {
 
   /// Updates data related to size of this view.
   void _updateViewDimensions() {
-    _width = widget.width ?? MediaQuery.of(context).size.width;
-
     _timeLineWidth = widget.timeLineWidth ?? _width * 0.13;
 
     _liveTimeIndicatorSettings = widget.liveTimeIndicatorSettings ??
@@ -487,6 +534,16 @@ class DayViewState<T extends Object?> extends State<DayView<T>> {
 
     assert(_halfHourIndicatorSettings.height < _hourHeight,
         "halfHourIndicator height must be less than minuteHeight * 60");
+
+    _quarterHourIndicatorSettings = widget.quarterHourIndicatorSettings ??
+        HourIndicatorSettings(
+          height: widget.heightPerMinute,
+          color: Constants.defaultBorderColor,
+          offset: 5,
+        );
+
+    assert(_quarterHourIndicatorSettings.height < _hourHeight,
+        "quarterHourIndicator height must be less than minuteHeight * 60");
   }
 
   void _calculateHeights() {
@@ -502,6 +559,7 @@ class DayViewState<T extends Object?> extends State<DayView<T>> {
         widget.fullDayEventBuilder ?? _defaultFullDayEventBuilder;
     _dayDetectorBuilder =
         widget.dayDetectorBuilder ?? _defaultPressDetectorBuilder;
+    _hourLinePainter = widget.hourLinePainter ?? _defaultHourLinePainter;
   }
 
   /// Sets the current date of this month.
@@ -630,15 +688,19 @@ class DayViewState<T extends Object?> extends State<DayView<T>> {
       onNextDay: nextPage,
       onPreviousDay: previousPage,
       onTitleTapped: () async {
-        final selectedDate = await showDatePicker(
-          context: context,
-          initialDate: date,
-          firstDate: _minDate,
-          lastDate: _maxDate,
-        );
+        if (widget.onHeaderTitleTap != null) {
+          widget.onHeaderTitleTap!(date);
+        } else {
+          final selectedDate = await showDatePicker(
+            context: context,
+            initialDate: date,
+            firstDate: _minDate,
+            lastDate: _maxDate,
+          );
 
-        if (selectedDate == null) return;
-        jumpToDate(selectedDate);
+          if (selectedDate == null) return;
+          jumpToDate(selectedDate);
+        }
       },
       headerStyle: widget.headerStyle,
     );
@@ -647,6 +709,32 @@ class DayViewState<T extends Object?> extends State<DayView<T>> {
   Widget _defaultFullDayEventBuilder(
           List<CalendarEventData<T>> events, DateTime date) =>
       FullDayEventView(events: events, date: date);
+
+  HourLinePainter _defaultHourLinePainter(
+    Color lineColor,
+    double lineHeight,
+    double offset,
+    double minuteHeight,
+    bool showVerticalLine,
+    double verticalLineOffset,
+    LineStyle lineStyle,
+    double dashWidth,
+    double dashSpaceWidth,
+    double emulateVerticalOffsetBy,
+  ) {
+    return HourLinePainter(
+      lineColor: lineColor,
+      lineHeight: lineHeight,
+      offset: offset,
+      minuteHeight: minuteHeight,
+      verticalLineOffset: verticalLineOffset,
+      showVerticalLine: showVerticalLine,
+      lineStyle: lineStyle,
+      dashWidth: dashWidth,
+      dashSpaceWidth: dashSpaceWidth,
+      emulateVerticalOffsetBy: emulateVerticalOffsetBy,
+    );
+  }
 
   /// Called when user change page using any gesture or inbuilt functions.
   ///
@@ -661,6 +749,7 @@ class DayViewState<T extends Object?> extends State<DayView<T>> {
         _currentIndex = index;
       });
     }
+    animateToDuration(widget.startDuration);
     widget.onPageChange?.call(_currentDate, _currentIndex);
   }
 
@@ -774,6 +863,26 @@ class DayViewState<T extends Object?> extends State<DayView<T>> {
       event: event,
       duration: duration ?? widget.pageTransitionDuration,
       curve: curve ?? widget.pageTransitionCurve,
+    );
+  }
+
+  /// Animate to specific offset in a day view using the start duration
+  Future<void> animateToDuration(
+    Duration startDuration, {
+    Duration duration = const Duration(milliseconds: 200),
+    Curve curve = Curves.linear,
+  }) async {
+    final offSetForSingleMinute = _height / 24 / 60;
+    final startDurationInMinutes = startDuration.inMinutes;
+
+    // Added ternary condition below to take care if user passing duration
+    // above 24 hrs then we take it max as 24 hours only
+    final offset = offSetForSingleMinute *
+        (startDurationInMinutes > 3600 ? 3600 : startDurationInMinutes);
+    animateTo(
+      offset.toDouble(),
+      duration: duration,
+      curve: curve,
     );
   }
 
